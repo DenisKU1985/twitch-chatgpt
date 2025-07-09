@@ -1,7 +1,5 @@
 import express from 'express';
 import fs from 'fs';
-import ws from 'ws';
-import expressWs from 'express-ws';
 import {job} from './keep_alive.js';
 import {OpenAIOperations} from './openai_operations.js';
 import {TwitchBot} from './twitch_bot.js';
@@ -12,7 +10,6 @@ console.log(process.env);
 
 // Setup express app
 const app = express();
-const expressWsInstance = expressWs(app);
 
 // Set the view engine to ejs
 app.set('view engine', 'ejs');
@@ -27,7 +24,6 @@ const TWITCH_AUTH = process.env.TWITCH_AUTH || 'oauth:vgvx55j6qzz1lkt3cwggxki1lv
 const COMMAND_NAME = process.env.COMMAND_NAME || '!gpt';
 const CHANNELS = process.env.CHANNELS || 'oSetinhas,jones88';
 const SEND_USERNAME = process.env.SEND_USERNAME || 'true';
-const ENABLE_TTS = process.env.ENABLE_TTS || 'false';
 const ENABLE_CHANNEL_POINTS = process.env.ENABLE_CHANNEL_POINTS || 'false';
 const COOLDOWN_DURATION = parseInt(process.env.COOLDOWN_DURATION, 10) || 10; // Cooldown duration in seconds
 
@@ -39,12 +35,11 @@ const commandNames = COMMAND_NAME.split(',').map(cmd => cmd.trim().toLowerCase()
 const channels = CHANNELS.split(',').map(channel => channel.trim());
 const maxLength = 399;
 let fileContext = 'You are a helpful Twitch Chatbot.';
-let lastUserMessage = '';
 let lastResponseTime = 0; // Track the last response time
 
 // Setup Twitch bot
 console.log('Channels: ', channels);
-const bot = new TwitchBot(TWITCH_USER, TWITCH_AUTH, channels, OPENAI_API_KEY, ENABLE_TTS);
+const bot = new TwitchBot(TWITCH_USER, TWITCH_AUTH, channels, OPENAI_API_KEY, 'false'); // TTS explizit deaktiviert
 
 // Setup OpenAI operations
 fileContext = fs.readFileSync('./file_context.txt', 'utf8');
@@ -82,7 +77,7 @@ bot.onMessage(async (channel, user, message, self) => {
     if (ENABLE_CHANNEL_POINTS === 'true' && user['msg-id'] === 'highlighted-message') {
         console.log(`Highlighted message: ${message}`);
         if (elapsedTime < COOLDOWN_DURATION) {
-            bot.say(channel, `Cooldown active. Please wait ${COOLDOWN_DURATION - elapsedTime.toFixed(1)} seconds before sending another message.`);
+            bot.say(channel, `Cooldown active. Bitte warten Sie ${COOLDOWN_DURATION - elapsedTime.toFixed(1)} Sekunden vor der nächsten Nachricht.`);
             return;
         }
         lastResponseTime = currentTime; // Update the last response time
@@ -94,14 +89,14 @@ bot.onMessage(async (channel, user, message, self) => {
     const command = commandNames.find(cmd => message.toLowerCase().startsWith(cmd));
     if (command) {
         if (elapsedTime < COOLDOWN_DURATION) {
-            bot.say(channel, `Cooldown active. Please wait ${COOLDOWN_DURATION - elapsedTime.toFixed(1)} seconds before sending another message.`);
+            bot.say(channel, `Cooldown active. Bitte warten Sie ${COOLDOWN_DURATION - elapsedTime.toFixed(1)} Sekunden vor der nächsten Nachricht.`);
             return;
         }
         lastResponseTime = currentTime; // Update the last response time
 
         let text = message.slice(command.length).trim();
         if (SEND_USERNAME === 'true') {
-            text = `Message from user ${user.username}: ${text}`;
+            text = `Nachricht von Nutzer ${user.username}: ${text}`;
         }
 
         const response = await openaiOps.make_openai_call(text);
@@ -115,22 +110,7 @@ bot.onMessage(async (channel, user, message, self) => {
         } else {
             bot.say(channel, response);
         }
-
-        if (ENABLE_TTS === 'true') {
-            try {
-                const ttsAudioUrl = await bot.sayTTS(channel, response, user['userstate']);
-                notifyFileChange(ttsAudioUrl);
-            } catch (error) {
-                console.error('TTS Error:', error);
-            }
-        }
     }
-});
-
-app.ws('/check-for-updates', (ws, req) => {
-    ws.on('message', message => {
-        // Handle WebSocket messages (if needed)
-    });
 });
 
 const messages = [{role: 'system', content: 'You are a helpful Twitch Chatbot.'}];
@@ -182,21 +162,6 @@ app.get('/gpt/:text', async (req, res) => {
     }
 });
 
-const server = app.listen(3000, () => {
+app.listen(3000, () => {
     console.log('Server running on port 3000');
 });
-
-const wss = expressWsInstance.getWss();
-wss.on('connection', ws => {
-    ws.on('message', message => {
-        // Handle client messages (if needed)
-    });
-});
-
-function notifyFileChange() {
-    wss.clients.forEach(client => {
-        if (client.readyState === ws.OPEN) {
-            client.send(JSON.stringify({updated: true}));
-        }
-    });
-}
